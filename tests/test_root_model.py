@@ -2,6 +2,7 @@ import importlib.util
 import inspect
 import pickle
 import typing
+from copy import deepcopy
 from datetime import date, datetime
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
@@ -670,6 +671,25 @@ def test_root_model_deep_copy() -> None:
     assert original.root is not copied.root
     assert original.root[0] is not copied.root[0]
     assert original.root == copied.root
+
+
+@pytest.mark.parametrize(
+    'copy_model',
+    [pytest.param(deepcopy, id='deepcopy'), pytest.param(lambda model: model.model_copy(deep=True), id='model_copy')],
+)
+def test_root_model_deepcopy_preserves_self_referential_root(copy_model) -> None:
+    """https://github.com/pydantic/pydantic/issues/14093"""
+
+    class Root(RootModel[list[Any]]):
+        pass
+
+    original = Root(root=[])
+    original.root.append(original)
+
+    copied = copy_model(original)
+
+    assert copied is not original
+    assert copied.root[0] is copied
 
 
 @pytest.mark.parametrize(

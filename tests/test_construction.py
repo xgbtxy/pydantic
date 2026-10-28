@@ -1,4 +1,5 @@
 import pickle
+from copy import deepcopy
 from typing import Annotated, Any
 
 import pytest
@@ -389,6 +390,106 @@ def test_model_copy_deep_update_with_private_attributes() -> None:
     assert m2.a == 2
     assert m2._private == {'modified'}
     assert m2._private is not m._private
+
+
+@pytest.mark.parametrize(
+    'copy_model',
+    [pytest.param(deepcopy, id='deepcopy'), pytest.param(lambda model: model.model_copy(deep=True), id='model_copy')],
+)
+def test_deepcopy_preserves_self_referential_model(copy_model) -> None:
+    """https://github.com/pydantic/pydantic/issues/14093"""
+
+    class Model(BaseModel):
+        child: 'Model | None' = None
+
+    original = Model()
+    original.child = original
+
+    copied = copy_model(original)
+
+    assert copied is not original
+    assert copied.child is copied
+
+
+@pytest.mark.parametrize(
+    'copy_model',
+    [pytest.param(deepcopy, id='deepcopy'), pytest.param(lambda model: model.model_copy(deep=True), id='model_copy')],
+)
+def test_deepcopy_preserves_mutual_model_references(copy_model) -> None:
+    """https://github.com/pydantic/pydantic/issues/14093"""
+
+    class Model(BaseModel):
+        child: 'Model | None' = None
+
+    original = Model()
+    child = Model()
+    original.child = child
+    child.child = original
+
+    copied = copy_model(original)
+
+    assert copied is not original
+    assert copied.child is not child
+    assert copied.child.child is copied
+
+
+@pytest.mark.parametrize(
+    'copy_model',
+    [pytest.param(deepcopy, id='deepcopy'), pytest.param(lambda model: model.model_copy(deep=True), id='model_copy')],
+)
+def test_deepcopy_preserves_shared_references_between_model_attributes(copy_model) -> None:
+    """https://github.com/pydantic/pydantic/issues/14093"""
+
+    class Model(BaseModel, extra='allow'):
+        first: Any
+        second: Any
+        _private: Any = PrivateAttr()
+
+    shared: list[int] = []
+    original = Model(first=shared, second=shared, extra=shared)
+    original._private = shared
+
+    copied = copy_model(original)
+
+    assert copied.first is copied.second is copied.extra is copied._private
+    assert copied.first is not shared
+
+
+def test_deepcopy_preserves_cycles_with_model_copy_update() -> None:
+    """https://github.com/pydantic/pydantic/issues/14093"""
+
+    class Model(BaseModel):
+        value: int = 0
+        child: 'Model | None' = None
+
+    original = Model(value=1)
+    child = Model(value=2)
+    original.child = child
+    child.child = original
+
+    copied = original.model_copy(deep=True, update={'value': 42})
+
+    assert copied.value == 42
+    assert copied.child.value == 2
+    assert copied.child.child is copied
+
+
+def test_deepcopy_uses_supplied_empty_memo() -> None:
+    """https://github.com/pydantic/pydantic/issues/14093"""
+
+    class Model(BaseModel):
+        first: Any
+        second: Any
+
+    shared: list[int] = []
+    original = Model(first=shared, second=shared)
+    memo: dict[int, Any] = {}
+
+    copied = deepcopy(original, memo)
+
+    assert memo[id(original)] is copied
+    assert copied.first is copied.second
+    assert deepcopy(shared, memo) is copied.first
 
 
 def test_copy_set_fields(ModelTwo, copy_method):
